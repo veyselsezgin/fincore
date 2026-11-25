@@ -20,35 +20,36 @@ npm test            # all workspace tests
 npm run build
 ```
 
-## Engine status
+## Engine status (v0.4.0)
 
-| Area            | Functions                                                                                           |
-| --------------- | --------------------------------------------------------------------------------------------------- |
-| Core            | `Result` contract and `Trace` builder (ADR 0002), `normCdf`, seeded `Rng`                           |
-| Solvers         | `brent`, `findRoots` (multi-root), `isIndeterminate`                                                |
-| Day count       | 30/360-US, 30E/360, ACT/360, ACT/365F, ACT/ACT-ISDA                                                 |
-| TVM             | `fv`, `pv`, `pmt`, `nper`, `rate`                                                                   |
-| Cash flow       | `npv`, `irr` (all roots), `mirr`, `xnpv`, `xirr`                                                    |
-| Cost of capital | `capm`, `wacc`, `waccFromCapm`                                                                      |
-| Analysis        | `npvSensitivity` (2-D grid), `monteCarloNpv` (seeded), `compareProjects` (Fisher rate)              |
-| Statements      | `analyzeStatements`: 20 ratios, DuPont 3/5-step, Altman Z/Z′/Z″, red flags, working-capital what-if |
-| Money           | Currency-tagged `Money`, decimal `amortizationSchedule`                                             |
+| Area                        | Functions                                                                                                                       |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Core                        | `Result` / `Trace` contract (ADR 0002), `normCdf`, `normInv`, seeded `Rng`                                                      |
+| Solvers & dates             | Brent, multi-root scan; 30/360-US, 30E/360, ACT/360, ACT/365F, ACT/ACT-ISDA                                                     |
+| TVM & cash flows            | FV/PV/PMT/NPER/RATE; NPV, IRR (all roots), MIRR, XNPV, XIRR; payback, discounted payback, PI; Fisher; bottom-up project FCF     |
+| Cost of capital & structure | CAPM, WACC, Hamada unlever/re-lever; DOL/DFL/DTL, break-even, EBIT-EPS indifference                                             |
+| Working capital             | EOQ, Baumol, Miller–Orr                                                                                                         |
+| Fixed income                | Bond price/yield, accrued, current yield, Macaulay/modified/effective duration, convexity (Excel PRICE/YIELD/DURATION parity)   |
+| Equity valuation            | Gordon, multi-stage DDM, FCFF/FCFE DCF                                                                                          |
+| Portfolio & risk            | Mean–variance metrics (PSD-checked), Sharpe, Treynor, Jensen; parametric VaR/ES; Monte Carlo NPV; sensitivity; Fisher crossover |
+| Statements                  | 20 ratios, DuPont 3/5-step, Altman Z/Z′/Z″, red flags, covenants, effective tax rate, working-capital what-if                   |
+| Money                       | Currency-tagged `Money`, decimal amortization                                                                                   |
 
-Tests: golden fixtures with sources (`packages/engine/test/fixtures/golden.json`), unit edge cases,
-property-based tests (fast-check), and Monte Carlo checked against closed-form normal results.
+Tests: golden fixtures with sources, Excel documentation examples, property-based tests (fast-check),
+and Monte Carlo checked against closed-form results.
 
 ## Web app
 
-Calculators are descriptors in [apps/web/src/registry.ts](apps/web/src/registry.ts); the form,
-results, charts, hand-off actions (e.g. WACC → NPV), Excel workbook and PDF report are generated
-from them.
+20 calculators are descriptors in [apps/web/src/registry.ts](apps/web/src/registry.ts) and
+[apps/web/src/calculators/](apps/web/src/calculators/); forms, results, charts, hand-offs (WACC → NPV,
+statements → WACC tax rate, portfolio → VaR), Excel, CSV and PDF exports are generated from them.
 
-- **Import:** paste from Excel or load CSV into any cash-flow list. Handles `1,234.56` and
-  `1.234,56`, accounting negatives `(1,000)`, currency marks, header rows, `DD.MM.YYYY` dates.
-- **Excel export:** live formulas (`=NPV`, `=IRR`, `=MIRR`, `=XNPV`, `=XIRR`, `=PMT`, `SUMPRODUCT`
-  sensitivity grid…). `apps/web/test/workbooks.test.ts` evaluates every exported formula with
-  HyperFormula and checks it against the engine.
-- **PDF:** feasibility report with inputs, results, charts, heatmap, steps and assumptions.
+- **Inputs:** both number conventions (`1,234.56` / `1.234,56`), paste from Excel, CSV and `.xlsx`
+  upload (values only; macro files and fake files refused).
+- **Sessions:** inputs persist in the browser; shareable scenario links; named cases with
+  side-by-side comparison.
+- **Excel export:** live formulas, each verified against the engine with HyperFormula.
+- **Themes:** dark terminal (default) and light.
 
 ## Adding a formula
 

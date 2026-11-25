@@ -1641,3 +1641,162 @@ button.secondary:disabled {
 .grid-input .add {
   margin: 6px;
 }
+
+/* --- light theme ------------------------------------------------------------------------- */
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: #f4f6f9;
+  --sidebar: #0f1622;
+  --panel: #ffffff;
+  --panel-2: #f8fafc;
+  --panel-3: #eef2f7;
+  --border: #e1e6ee;
+  --border-strong: #cdd5e0;
+  --text: #121a26;
+  --text-2: #3c4859;
+  --muted: #687586;
+  --faint: #98a3b3;
+  --sidebar-text: #b8c2d0;
+  --sidebar-muted: #6c7889;
+  --accent: #2563eb;
+  --accent-strong: #1d4ed8;
+  --accent-soft: rgba(37, 99, 235, 0.09);
+  --ok: #138a52;
+  --ok-soft: rgba(19, 138, 82, 0.1);
+  --warn: #a86400;
+  --warn-soft: rgba(168, 100, 0, 0.1);
+  --err: #c8282f;
+  --err-soft: rgba(200, 40, 47, 0.08);
+  --curve: #2563eb;
+  --curve2: #d97706;
+  --grid: #edf1f6;
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.05);
+}
+:root[data-theme='light'] .errors li,
+:root[data-theme='light'] .alert-banner p {
+  color: #7a1418;
+}
+:root[data-theme='light'] .warnings li {
+  color: #5e3900;
+}
+:root[data-theme='light'] .heatmap td.heat {
+  border-color: rgba(255, 255, 255, 0.7);
+}
+.theme-toggle {
+  margin: 8px 10px 0;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--sidebar-text);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  text-align: left;
+}
+.theme-toggle:hover {
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* --- saved cases ------------------------------------------------------------------------- */
+.cases {
+  margin: 0 0 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.workspace.wide .cases {
+  grid-column: 1 / -1;
+}
+.cases-save {
+  display: flex;
+  gap: 6px;
+}
+.cases-save input {
+  font-size: 0.8rem;
+}
+.cases-save button {
+  white-space: nowrap;
+}
+.case-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.case-list li {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--border-strong);
+  background: var(--panel-2);
+  border-radius: 999px;
+  padding: 2px 4px 2px 10px;
+}
+.case-list .icon {
+  height: 22px;
+  width: 22px;
+  border: none;
+  padding: 0;
+}
+.case-compare {
+  margin: 0 0 16px;
+}
+
+/* --- mobile ------------------------------------------------------------------------------ */
+@media (max-width: 700px) {
+  main {
+    padding: 12px 10px 32px;
+  }
+  .topbar .chips {
+    display: none;
+  }
+  h1 {
+    font-size: 1.25rem;
+  }
+  .subtabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+  .subtabs button {
+    flex: 0 0 auto;
+  }
+  .inputs,
+  .results {
+    padding: 12px;
+  }
+  .statement-grid th.item-label {
+    min-width: 150px;
+    white-space: normal;
+  }
+  .statement-grid td {
+    min-width: 96px;
+  }
+  .outputs {
+    grid-template-columns: 1fr 1fr;
+  }
+  .output-value {
+    font-size: 1.05rem;
+  }
+  .export-bar {
+    width: 100%;
+  }
+  .export-bar button {
+    flex: 1 1 auto;
+  }
+  .zgauge-row {
+    grid-template-columns: 56px 1fr 70px;
+  }
+  .cases-save {
+    flex-wrap: wrap;
+  }
+}
+@media (max-width: 420px) {
+  .outputs {
+    grid-template-columns: 1fr;
+  }
+  .nav-group {
+    margin-bottom: 8px;
+  }
+}
