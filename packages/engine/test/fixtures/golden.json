@@ -1,0 +1,187 @@
+{
+  "$comment": "Benchmark cases with external sources. 'tol' is absolute and reflects the precision of the published value. Never edit an expected value to make a test pass; fix the engine or document the convention difference.",
+  "cases": [
+    {
+      "id": "pmt-excel-1",
+      "fn": "pmt",
+      "input": { "rate": 0.006666666666666667, "nper": 10, "pv": 10000 },
+      "expected": -1037.03,
+      "tol": 0.005,
+      "source": "Microsoft Support, PMT function: =PMT(8%/12,10,10000) = ($1,037.03)"
+    },
+    {
+      "id": "pmt-excel-savings",
+      "fn": "pmt",
+      "input": { "rate": 0.005, "nper": 216, "pv": 0, "fv": 50000 },
+      "expected": -129.08,
+      "tol": 0.005,
+      "source": "Microsoft Support, PMT function: =PMT(6%/12,18*12,0,50000) = ($129.08)"
+    },
+    {
+      "id": "fv-excel-due",
+      "fn": "fv",
+      "input": { "rate": 0.005, "nper": 10, "pmt": -200, "pv": -500, "timing": "begin" },
+      "expected": 2581.4,
+      "tol": 0.005,
+      "source": "Microsoft Support, FV function: =FV(0.06/12,10,-200,-500,1) = $2,581.40"
+    },
+    {
+      "id": "pv-excel-annuity",
+      "fn": "pv",
+      "input": { "rate": 0.006666666666666667, "nper": 240, "pmt": 500 },
+      "expected": -59777.15,
+      "tol": 0.005,
+      "source": "Microsoft Support, PV function: =PV(0.08/12,12*20,500,,0) = ($59,777.15)"
+    },
+    {
+      "id": "nper-excel-due",
+      "fn": "nper",
+      "input": { "rate": 0.01, "pmt": -100, "pv": -1000, "fv": 10000, "timing": "begin" },
+      "expected": 59.6738657,
+      "tol": 1e-7,
+      "source": "Microsoft Support, NPER function: =NPER(12%/12,-100,-1000,10000,1) = 59.6738657"
+    },
+    {
+      "id": "nper-excel-end",
+      "fn": "nper",
+      "input": { "rate": 0.01, "pmt": -100, "pv": -1000, "fv": 10000 },
+      "expected": 60.0821229,
+      "tol": 1e-7,
+      "source": "Microsoft Support, NPER function: =NPER(12%/12,-100,-1000,10000) = 60.0821229"
+    },
+    {
+      "id": "nper-excel-negative",
+      "fn": "nper",
+      "input": { "rate": 0.01, "pmt": -100, "pv": -1000 },
+      "expected": -9.5785940398,
+      "tol": 1e-9,
+      "expectWarning": "NEGATIVE_NPER",
+      "source": "Analytic: n = ln(10000/11000)/ln(1.01) = -9.5785940398 (Excel NPER doc example; Excel displays -9.578594)"
+    },
+    {
+      "id": "npv-excel",
+      "fn": "npv",
+      "input": { "rate": 0.1, "cashFlows": [-10000, 3000, 4200, 6800], "firstPeriod": 1 },
+      "expected": 1188.44,
+      "tol": 0.005,
+      "source": "Microsoft Support, NPV function: =NPV(10%,-10000,3000,4200,6800) = $1,188.44"
+    },
+    {
+      "id": "irr-excel-5y",
+      "fn": "irr",
+      "input": { "cashFlows": [-70000, 12000, 15000, 18000, 21000, 26000] },
+      "expected": 0.087,
+      "tol": 0.0005,
+      "source": "Microsoft Support, IRR function: investment's IRR after five years = 8.7%"
+    },
+    {
+      "id": "irr-excel-4y",
+      "fn": "irr",
+      "input": { "cashFlows": [-70000, 12000, 15000, 18000, 21000] },
+      "expected": -0.021,
+      "tol": 0.0005,
+      "source": "Microsoft Support, IRR function: investment's IRR after four years = -2.1%"
+    },
+    {
+      "id": "irr-excel-2y",
+      "fn": "irr",
+      "input": { "cashFlows": [-70000, 12000, 15000] },
+      "expected": -0.444,
+      "tol": 0.0005,
+      "source": "Microsoft Support, IRR function: IRR after two years (guess -10%) = -44.4%"
+    },
+    {
+      "id": "mirr-excel-5y",
+      "fn": "mirr",
+      "input": {
+        "cashFlows": [-120000, 39000, 30000, 21000, 37000, 46000],
+        "financeRate": 0.1,
+        "reinvestRate": 0.12
+      },
+      "expected": 0.126,
+      "tol": 0.0005,
+      "source": "Microsoft Support, MIRR function: modified rate of return after five years = 12.6%"
+    },
+    {
+      "id": "mirr-excel-3y",
+      "fn": "mirr",
+      "input": {
+        "cashFlows": [-120000, 39000, 30000, 21000],
+        "financeRate": 0.1,
+        "reinvestRate": 0.12
+      },
+      "expected": -0.048,
+      "tol": 0.0005,
+      "source": "Microsoft Support, MIRR function: modified rate of return after three years = -4.8%"
+    },
+    {
+      "id": "mirr-excel-5y-14",
+      "fn": "mirr",
+      "input": {
+        "cashFlows": [-120000, 39000, 30000, 21000, 37000, 46000],
+        "financeRate": 0.1,
+        "reinvestRate": 0.14
+      },
+      "expected": 0.135,
+      "tol": 0.0005,
+      "source": "Microsoft Support, MIRR function: five-year rate based on 14% reinvest rate = 13.5%"
+    },
+    {
+      "id": "xnpv-excel",
+      "fn": "xnpv",
+      "input": {
+        "rate": 0.09,
+        "flows": [
+          { "date": "2008-01-01", "amount": -10000 },
+          { "date": "2008-03-01", "amount": 2750 },
+          { "date": "2008-10-30", "amount": 4250 },
+          { "date": "2009-02-15", "amount": 3250 },
+          { "date": "2009-04-01", "amount": 2750 }
+        ]
+      },
+      "expected": 2086.65,
+      "tol": 0.005,
+      "source": "Microsoft Support, XNPV function example = $2,086.65"
+    },
+    {
+      "id": "xirr-excel",
+      "fn": "xirr",
+      "input": {
+        "flows": [
+          { "date": "2008-01-01", "amount": -10000 },
+          { "date": "2008-03-01", "amount": 2750 },
+          { "date": "2008-10-30", "amount": 4250 },
+          { "date": "2009-02-15", "amount": 3250 },
+          { "date": "2009-04-01", "amount": 2750 }
+        ]
+      },
+      "expected": 0.373362535,
+      "tol": 1e-8,
+      "source": "Microsoft Support, XIRR function example = 0.373362535 (37.34%)"
+    },
+    {
+      "id": "yearfrac-30360",
+      "fn": "yearFraction",
+      "input": { "start": "2012-01-01", "end": "2012-07-30", "dayCount": "30/360-US" },
+      "expected": 0.58055556,
+      "tol": 1e-8,
+      "source": "Microsoft Support, YEARFRAC function: basis 0 (US 30/360) = 0.58055556"
+    },
+    {
+      "id": "yearfrac-act365",
+      "fn": "yearFraction",
+      "input": { "start": "2012-01-01", "end": "2012-07-30", "dayCount": "ACT/365F" },
+      "expected": 0.57808219,
+      "tol": 1e-8,
+      "source": "Microsoft Support, YEARFRAC function: basis 3 (Actual/365) = 0.57808219"
+    },
+    {
+      "id": "yearfrac-actact-same-year",
+      "fn": "yearFraction",
+      "input": { "start": "2012-01-01", "end": "2012-07-30", "dayCount": "ACT/ACT-ISDA" },
+      "expected": 0.57650273,
+      "tol": 1e-8,
+      "source": "Microsoft Support, YEARFRAC basis 1 = 0.57650273. Within one calendar year Excel basis 1 equals ACT/ACT ISDA (211/366)."
+    }
+  ]
+}
