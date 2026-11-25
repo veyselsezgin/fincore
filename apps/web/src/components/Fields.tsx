@@ -333,6 +333,7 @@ function StatementImportButton({
   const [open, setOpen] = useState(false);
   const [text, setText] = useState('');
   const [decimal, setDecimal] = useState<DecimalStyle>('auto');
+  const [fileError, setFileError] = useState<string | null>(null);
   const imp = text.trim() ? normaliseExpenseSigns(parseStatementBlock(text, { decimal })) : null;
   const ok = imp && imp.errors.length === 0 && imp.matched.length > 0;
 
@@ -388,7 +389,23 @@ function StatementImportButton({
                 <option value="comma">Comma: 1.234,56</option>
               </select>
             </label>
+            <label className="file">
+              <span>Excel / CSV File</span>
+              <input
+                type="file"
+                accept={IMPORT_ACCEPT}
+                onChange={async (e) => {
+                  setFileError(null);
+                  const f = e.target.files?.[0];
+                  if (!f) return;
+                  const r = await readImportFile(f);
+                  if ('error' in r) setFileError(r.error);
+                  else setText(r.text);
+                }}
+              />
+            </label>
           </div>
+          {fileError && <p className="import-msg error">{fileError}</p>}
           {imp && (
             <div className="import-report">
               {imp.errors.map((e) => (
@@ -478,6 +495,24 @@ function ReadAs({ text }: { text: string }) {
       {r.ambiguous ? `Ambiguous: read as ${shown}` : `Read as ${shown}`}
     </span>
   );
+}
+
+const IMPORT_ACCEPT = '.xlsx,.csv,.tsv,.txt,text/csv,text/plain';
+
+/** Reads an uploaded .xlsx (first sheet, values only) or text/CSV file into paste-able text. */
+async function readImportFile(f: File): Promise<{ text: string } | { error: string }> {
+  try {
+    if (/\.(xlsx|xlsm|xls|xlsb|xltm|xlam)$/i.test(f.name)) {
+      const { xlsxToText } = await import('../io/xlsxImport');
+      return { text: await xlsxToText(f) };
+    }
+    if (!/\.(csv|txt|tsv)$/i.test(f.name))
+      return { error: 'Choose an .xlsx, .csv, .tsv or .txt file.' };
+    if (f.size > MAX_IMPORT_BYTES) return { error: 'The file is larger than 1 MB.' };
+    return { text: await f.text() };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 function RemoveButton({ disabled, onClick }: { disabled: boolean; onClick: () => void }) {
@@ -708,12 +743,9 @@ function ImportPanel({
   const onFile = async (f: File | undefined) => {
     setFileError(null);
     if (!f) return;
-    if (!/\.(csv|txt|tsv)$/i.test(f.name))
-      return setFileError(
-        'Choose a .csv, .tsv or .txt file. For Excel files, select the cells in Excel and paste them here.',
-      );
-    if (f.size > MAX_IMPORT_BYTES) return setFileError('The file is larger than 1 MB.');
-    setText(await f.text());
+    const r = await readImportFile(f);
+    if ('error' in r) setFileError(r.error);
+    else setText(r.text);
   };
 
   return (
@@ -766,11 +798,11 @@ function ImportPanel({
           </>
         )}
         <label className="file">
-          <span>CSV File</span>
+          <span>Excel / CSV File</span>
           <input
             ref={fileRef}
             type="file"
-            accept=".csv,.tsv,.txt,text/csv,text/plain"
+            accept={IMPORT_ACCEPT}
             onChange={(e) => onFile(e.target.files?.[0])}
           />
         </label>

@@ -172,3 +172,65 @@ export function scenarioUrl(
 ): string {
   return `${location.origin}${location.pathname}?${SCENARIO_PARAM}=${encodeScenario(calcId, values)}#/${calcId}`;
 }
+
+// --- named cases (scenario manager) ------------------------------------------------------------
+
+export const CASES_KEY = 'fincore.cases.v1';
+export const MAX_CASES_PER_CALC = 12;
+
+export interface SavedCase {
+  name: string;
+  savedAt: string;
+  values: Values;
+}
+
+export function loadCases(calcs: Calculator[]): Record<string, SavedCase[]> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(CASES_KEY) ?? 'null') as unknown;
+    if (!isRecord(raw) || raw.v !== 1 || !isRecord(raw.cases)) return {};
+    const out: Record<string, SavedCase[]> = {};
+    for (const c of calcs) {
+      const list = raw.cases[c.id];
+      if (!Array.isArray(list)) continue;
+      const valid = list
+        .filter(
+          (x): x is Record<string, unknown> => isRecord(x) && isStr(x.name) && isStr(x.savedAt),
+        )
+        .map((x) => ({
+          name: x.name as string,
+          savedAt: x.savedAt as string,
+          values: sanitizeValues(c, x.values),
+        }))
+        .filter((x): x is SavedCase => x.values !== null)
+        .slice(0, MAX_CASES_PER_CALC);
+      if (valid.length) out[c.id] = valid;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function saveCases(cases: Record<string, SavedCase[]>): void {
+  try {
+    localStorage.setItem(CASES_KEY, JSON.stringify({ v: 1, cases }));
+  } catch {
+    /* storage unavailable: cases live for this session only */
+  }
+}
+
+/** Adds or replaces (same name) a case, newest first, capped per calculator. */
+export function upsertCase(
+  list: SavedCase[],
+  name: string,
+  values: Values,
+  now = new Date(),
+): SavedCase[] {
+  const clean = name.trim().slice(0, 60);
+  const next: SavedCase = {
+    name: clean,
+    savedAt: now.toISOString(),
+    values: structuredClone(values),
+  };
+  return [next, ...list.filter((c) => c.name !== clean)].slice(0, MAX_CASES_PER_CALC);
+}

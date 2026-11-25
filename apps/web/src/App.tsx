@@ -10,7 +10,28 @@ import {
   type Computation,
   type Values,
 } from './registry';
-import { decodeScenario, loadSession, saveSession, SCENARIO_PARAM, scenarioUrl } from './session';
+import { CaseComparison, CaseManager } from './components/Cases';
+import {
+  decodeScenario,
+  loadCases,
+  loadSession,
+  saveCases,
+  saveSession,
+  SCENARIO_PARAM,
+  scenarioUrl,
+  upsertCase,
+  type SavedCase,
+} from './session';
+
+const THEME_KEY = 'fincore.theme';
+type Theme = 'dark' | 'light';
+function readTheme(): Theme {
+  try {
+    return localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark';
+  } catch {
+    return 'dark';
+  }
+}
 
 const byId = new Map(CALCULATORS.map((c) => [c.id, c]));
 const categories = [...new Set(CALCULATORS.map((c) => c.category))];
@@ -63,6 +84,24 @@ export function App() {
     return () => clearTimeout(t);
   }, [inputs]);
 
+  const [cases, setCases] = useState<Record<string, SavedCase[]>>(() => loadCases(CALCULATORS));
+  const updateCases = (id: string, list: SavedCase[]) =>
+    setCases((all) => {
+      const next = { ...all, [id]: list };
+      saveCases(next);
+      return next;
+    });
+
+  const [theme, setTheme] = useState<Theme>(readTheme);
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      /* preference not persisted */
+    }
+  }, [theme]);
+
   /** Hand-off between calculators: patch the target's inputs, then navigate to it. */
   const runAction = (a: Action) => {
     const target = byId.get(a.target);
@@ -107,6 +146,14 @@ export function App() {
             </div>
           ))}
         </nav>
+        <button
+          type="button"
+          className="theme-toggle"
+          onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+          aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
+        >
+          {theme === 'dark' ? '☀ Light theme' : '☾ Dark theme'}
+        </button>
         <p className="sidebar-note">
           Deterministic engine v{ENGINE_VERSION}. All outputs derive from user inputs only: no
           market data feeds, no model estimates. Session saved in this browser.
@@ -122,6 +169,16 @@ export function App() {
           flash={flash?.target === calc.id ? flash.message : null}
           dismissFlash={() => setFlash(null)}
           onAction={runAction}
+          cases={cases[calc.id] ?? []}
+          onSaveCase={(name) =>
+            updateCases(calc.id, upsertCase(cases[calc.id] ?? [], name, values))
+          }
+          onDeleteCase={(name) =>
+            updateCases(
+              calc.id,
+              (cases[calc.id] ?? []).filter((c) => c.name !== name),
+            )
+          }
         />
       </main>
     </div>
@@ -136,6 +193,9 @@ interface ViewProps {
   flash: string | null;
   dismissFlash: () => void;
   onAction: (a: Action) => void;
+  cases: SavedCase[];
+  onSaveCase: (name: string) => void;
+  onDeleteCase: (name: string) => void;
 }
 
 function CalculatorView({
@@ -146,7 +206,11 @@ function CalculatorView({
   flash,
   dismissFlash,
   onAction,
+  cases,
+  onSaveCase,
+  onDeleteCase,
 }: ViewProps) {
+  const [comparing, setComparing] = useState(false);
   // Heavy calculators (Monte Carlo) recompute on a deferred copy so typing stays responsive.
   const deferred = useDeferredValue(values);
   const computation: Computation = useMemo(() => {
@@ -225,6 +289,9 @@ function CalculatorView({
           </div>
         ))}
       </header>
+      {comparing && cases.length > 0 && (
+        <CaseComparison calc={calc} current={values} cases={cases} />
+      )}
       <div className={`workspace ${calc.layout === 'wide' ? 'wide' : ''}`}>
         <form className="inputs" onSubmit={(e) => e.preventDefault()}>
           <div className="inputs-head">
@@ -241,6 +308,14 @@ function CalculatorView({
               </button>
             </div>
           </div>
+          <CaseManager
+            cases={cases}
+            onSave={onSaveCase}
+            onLoad={(c) => setValues({ ...defaults(calc), ...c.values })}
+            onDelete={onDeleteCase}
+            comparing={comparing}
+            onToggleCompare={() => setComparing((x) => !x)}
+          />
           {formFields.map((f) => renderField(f.key))}
         </form>
         <ResultPanel
