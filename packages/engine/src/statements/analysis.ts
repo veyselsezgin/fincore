@@ -96,6 +96,8 @@ export interface StatementAnalysisInput {
   benchmarks?: Partial<Record<RatioId, number>>;
   /** Working-capital what-if on the latest period, in days (negative = faster). */
   whatIf?: { deltaDso: number; deltaDio: number; deltaDpo: number };
+  /** Loan covenant minimums; a breach raises a critical red flag. */
+  covenants?: { minDscr?: number | null; minInterestCoverage?: number | null };
 }
 
 // --- outputs ---------------------------------------------------------------------------------
@@ -113,6 +115,8 @@ export interface DerivedLines {
   ebit: number;
   ebt: number;
   netIncome: number;
+  /** Historical effective tax rate = tax / EBT (null when EBT ≤ 0). Full precision. */
+  effectiveTaxRate: number | null;
   /** Effective tax rate used for NOPAT (null when not meaningful and no statutory rate). */
   taxRateUsed: number | null;
 }
@@ -448,9 +452,25 @@ export function analyzeStatements(input: StatementAnalysisInput): Result<Stateme
         t.error({ code: 'INPUT_NOT_FINITE', message: `${k} must be a number.`, field: k });
     }
   }
+  for (const k of ['minDscr', 'minInterestCoverage'] as const) {
+    const x = input.covenants?.[k];
+    if (x != null && (!Number.isFinite(x) || x < 0)) {
+      t.error({
+        code: 'INVALID_COVENANT',
+        message: `Covenant ${k} must be a non-negative number.`,
+        field: k,
+      });
+    }
+  }
   if (t.hasErrors) return t.fail();
 
   const labels = P.map((p, i) => p.label?.trim() || `Period ${i + 1}`);
+  if (input.covenants?.minDscr != null || input.covenants?.minInterestCoverage != null) {
+    t.assume(
+      'covenants',
+      `Loan covenants: minimum DSCR ${input.covenants.minDscr ?? 'none'}×, minimum interest coverage ${input.covenants.minInterestCoverage ?? 'none'}×; any period below a minimum is a critical breach.`,
+    );
+  }
   const v = (i: number, k: StatementItemKey) => P[i]![k] ?? 0;
   const opt = (i: number, k: StatementItemKey) => P[i]![k];
 
@@ -515,6 +535,7 @@ export function analyzeStatements(input: StatementAnalysisInput): Result<Stateme
       ebit,
       ebt,
       netIncome,
+      effectiveTaxRate: effective,
       taxRateUsed,
     };
   });
@@ -770,6 +791,26 @@ export function analyzeStatements(input: StatementAnalysisInput): Result<Stateme
         category: 'leverage',
         period: L,
         message: `DSCR ${ds.toFixed(2)}×: ${ds < 1 ? 'operating cash earnings do not cover debt service' : 'below the 1.25× level common in loan covenants'}.`,
+      });
+    }
+    // User-defined loan covenants: a breach is always critical.
+    const cov = input.covenants;
+    if (cov?.minDscr != null && ds !== null && ds < cov.minDscr) {
+      flag({
+        code: 'COVENANT_BREACH_DSCR',
+        severity: 'critical',
+        category: 'leverage',
+        period: L,
+        message: `Covenant breach: DSCR ${ds.toFixed(2)}× is below the ${cov.minDscr.toFixed(2)}× minimum.`,
+      });
+    }
+    if (cov?.minInterestCoverage != null && ic !== null && ic < cov.minInterestCoverage) {
+      flag({
+        code: 'COVENANT_BREACH_TIE',
+        severity: 'critical',
+        category: 'leverage',
+        period: L,
+        message: `Covenant breach: interest coverage ${ic.toFixed(2)}× is below the ${cov.minInterestCoverage.toFixed(2)}× minimum.`,
       });
     }
     const de = r('debtToEquity', i);

@@ -1,5 +1,6 @@
 import { npvRaw, ratioMeta, RATIO_IDS, STATEMENT_ITEMS, type DupontPeriod } from '@fincore/engine';
 import { fmtMoney, fmtPct, fmtTrace } from '../format';
+import { fmtAxis } from '../components/LineChart';
 import { profileRange } from '../components/NpvChart';
 import { num } from '../registry';
 import { heatColorRgb } from './colors';
@@ -10,6 +11,7 @@ import type {
   Computation,
   DatedRow,
   DistRow,
+  LineChartSpec,
   Presentation,
   StatementGrid,
   TableSpec,
@@ -47,6 +49,7 @@ export function inputRows(
         scalars.push([f.label, `${v as string}${f.suffix ?? ''}`]);
         break;
       case 'date':
+      case 'text':
         scalars.push([f.label, v as string]);
         break;
       case 'select':
@@ -100,6 +103,13 @@ export function inputRows(
         if (rows.length) lists.push({ title: f.label, columns: ['Ratio', 'Target'], rows });
         break;
       }
+      case 'grid':
+        lists.push({
+          title: f.label,
+          columns: f.columns.map((c) => c.label),
+          rows: v as string[][],
+        });
+        break;
     }
   }
   return { scalars, lists };
@@ -397,6 +407,12 @@ export async function buildPdf(calc: Calculator, values: Values, comp: Computati
     drawHistogram(doc, view.histogram, M, y + 6, W - 2 * M, 190);
     y += 206;
   }
+  if (view?.lines) {
+    heading(view.lines.title);
+    ensure(220);
+    drawLines(doc, view.lines, M, y + 6, W - 2 * M, 200);
+    y += 216;
+  }
   if (view?.heatmap) {
     const h = view.heatmap;
     heading(h.title);
@@ -622,4 +638,57 @@ function fmtCompact(v: number): string {
   return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(
     v,
   );
+}
+
+function drawLines(doc: Doc, spec: LineChartSpec, X: number, Y: number, Wd: number, Ht: number) {
+  const padL = 52;
+  const padB = 22;
+  const x0 = X + padL;
+  const w = Wd - padL;
+  const h = Ht - padB;
+  const pts = spec.series
+    .flatMap((s) => s.points)
+    .filter(([a, b]) => Number.isFinite(a) && Number.isFinite(b));
+  let [xa, xb] = [Math.min(...pts.map((p) => p[0])), Math.max(...pts.map((p) => p[0]))];
+  let [ya, yb] = [Math.min(...pts.map((p) => p[1])), Math.max(...pts.map((p) => p[1]))];
+  if (xa === xb) [xa, xb] = [xa - 1, xb + 1];
+  if (ya === yb) [ya, yb] = [ya - 1, yb + 1];
+  const px = (v: number) => x0 + ((v - xa) / (xb - xa)) * w;
+  const py = (v: number) => Y + ((yb - v) / (yb - ya)) * h;
+  axes(doc, x0, Y, w, h);
+  doc
+    .setFont('helvetica', 'normal')
+    .setFontSize(7)
+    .setTextColor(...GREY);
+  const ys = niceStep(yb - ya, 5);
+  for (let v = Math.ceil(ya / ys) * ys; v <= yb; v += ys) {
+    doc.setDrawColor(238, 241, 245).line(x0, py(v), x0 + w, py(v));
+    doc.text(t2(fmtAxis(v, spec.yFormat)), x0 - 4, py(v) + 2.5, { align: 'right' });
+  }
+  const xs = niceStep(xb - xa, 6);
+  for (let v = Math.ceil(xa / xs) * xs; v <= xb + 1e-12; v += xs) {
+    doc.text(t2(fmtAxis(v, spec.xFormat)), px(v), Y + h + 11, { align: 'center' });
+  }
+  doc.text(t2(spec.xLabel), x0 + w / 2, Y + h + 20, { align: 'center' });
+  const colors: RGB[] = [BLUE, ORANGE, GREEN];
+  spec.series.forEach((s, i) => {
+    const p = s.points.filter(([a, b]) => Number.isFinite(a) && Number.isFinite(b));
+    doc.setDrawColor(...colors[i % colors.length]!).setLineWidth(1.5);
+    for (let k = 1; k < p.length; k++)
+      doc.line(px(p[k - 1]![0]), py(p[k - 1]![1]), px(p[k]![0]), py(p[k]![1]));
+    if (spec.series.length > 1) {
+      doc.setFillColor(...colors[i % colors.length]!).rect(x0 + 8 + i * 110, Y + 6, 10, 4, 'F');
+      doc.setTextColor(40, 50, 65).text(t2(s.name), x0 + 22 + i * 110, Y + 10);
+    }
+  });
+  for (const m of spec.markers ?? []) {
+    if (!(m.x >= xa && m.x <= xb)) continue;
+    doc
+      .setDrawColor(...ORANGE)
+      .setLineWidth(0.6)
+      .setLineDashPattern([3, 3], 0)
+      .line(px(m.x), Y, px(m.x), Y + h);
+    doc.setLineDashPattern([], 0);
+    doc.setTextColor(...ORANGE).text(t2(m.label), px(m.x) + 3, Y + 18);
+  }
 }

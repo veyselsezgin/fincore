@@ -74,6 +74,15 @@ function renderControl(
           <ReadAs text={value as string} />
         </>
       );
+    case 'text':
+      return (
+        <input
+          id={id}
+          value={value as string}
+          maxLength={80}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      );
     case 'date':
       return (
         <input
@@ -128,7 +137,84 @@ function renderControl(
       );
     case 'benchmarks':
       return <BenchmarkEditor values={value as BenchmarkValues} onChange={onChange} />;
+    case 'grid':
+      return (
+        <GridInput
+          rows={value as string[][]}
+          columns={field.columns}
+          minRows={field.minRows}
+          maxRows={field.maxRows}
+          onChange={onChange}
+        />
+      );
   }
+}
+
+function GridInput({
+  rows,
+  columns,
+  minRows,
+  maxRows,
+  onChange,
+}: {
+  rows: string[][];
+  columns: { label: string; numeric?: boolean }[];
+  minRows: number;
+  maxRows: number;
+  onChange: (v: string[][]) => void;
+}) {
+  const set = (r: number, c: number, x: string) =>
+    onChange(rows.map((row, i) => (i === r ? row.map((cell, j) => (j === c ? x : cell)) : row)));
+  return (
+    <div className="table-wrap grid-input">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            {columns.map((c) => (
+              <th key={c.label} className={c.numeric ? 'num' : ''}>
+                {c.label}
+              </th>
+            ))}
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, r) => (
+            <tr key={r}>
+              <td className="row-label">{r + 1}</td>
+              {columns.map((c, j) => (
+                <td key={c.label}>
+                  <input
+                    inputMode={c.numeric ? 'decimal' : 'text'}
+                    className={c.numeric ? 'num-input' : ''}
+                    value={row[j] ?? ''}
+                    onChange={(e) => set(r, j, e.target.value)}
+                    aria-label={`${c.label}, row ${r + 1}`}
+                  />
+                </td>
+              ))}
+              <td>
+                <RemoveButton
+                  disabled={rows.length <= minRows}
+                  onClick={() => onChange(rows.filter((_, i) => i !== r))}
+                />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {rows.length < maxRows && (
+        <button
+          type="button"
+          className="add"
+          onClick={() => onChange([...rows, columns.map(() => '')])}
+        >
+          + Add Row
+        </button>
+      )}
+    </div>
+  );
 }
 
 // --- statement grid --------------------------------------------------------------------------
