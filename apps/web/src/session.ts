@@ -21,6 +21,7 @@ const isRecord = (x: unknown): x is Record<string, unknown> =>
 export function sanitizeField(field: Field, raw: unknown): FieldValue | undefined {
   switch (field.kind) {
     case 'number':
+    case 'text':
     case 'date':
     case 'slider':
       return isStr(raw) ? raw : undefined;
@@ -73,6 +74,13 @@ export function sanitizeField(field: Field, raw: unknown): FieldValue | undefine
         if (/^[a-zA-Z]{2,40}$/.test(k) && isStr(v)) out[k] = v;
       return out;
     }
+    case 'grid':
+      return Array.isArray(raw) &&
+        raw.length >= field.minRows &&
+        raw.length <= field.maxRows &&
+        raw.every((r) => Array.isArray(r) && r.length === field.columns.length && r.every(isStr))
+        ? raw.map((r) => [...(r as string[])])
+        : undefined;
   }
 }
 

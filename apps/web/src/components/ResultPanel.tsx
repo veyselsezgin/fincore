@@ -15,6 +15,7 @@ import { writeXlsx } from '../io/xlsx';
 // KaTeX is large and only needed for the trace tab: load it on demand.
 const Formula = lazy(() => import('./Formula').then((m) => ({ default: m.Formula })));
 import { Heatmap } from './Heatmap';
+import { LineChart } from './LineChart';
 import { Histogram } from './Histogram';
 import { NpvChart } from './NpvChart';
 
@@ -161,6 +162,7 @@ const ALL_PARTS: SectionPart[] = [
   'tables',
   'dupont',
   'zscore',
+  'lines',
 ];
 
 /**
@@ -221,6 +223,7 @@ function ViewParts({
       {parts.has('chart') && view.chart && <NpvChart spec={view.chart} />}
       {parts.has('histogram') && view.histogram && <Histogram spec={view.histogram} />}
       {parts.has('heatmap') && view.heatmap && <Heatmap spec={view.heatmap} />}
+      {parts.has('lines') && view.lines && <LineChart spec={view.lines} />}
       {parts.has('diagnostics') && view.diagnostics && <DiagnosticsView items={view.diagnostics} />}
       {parts.has('tables') &&
         tables.map((t) => <DataTable key={t.title ?? t.columns.join()} spec={t} />)}

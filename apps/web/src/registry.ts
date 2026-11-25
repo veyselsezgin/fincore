@@ -1,7 +1,10 @@
 import * as E from '@fincore/engine';
 import type { Result } from '@fincore/engine';
 import { fmtMoney, fmtNum, fmtPct } from './format';
+import { list, num, optNum, pct, str, txt } from './fieldValues';
 import { readNumber } from './io/parse';
+import { bondCalc, dcfCalc, ddmCalc, portfolioCalc, varCalc } from './calculators/markets';
+import { cashCalc, ebitEpsCalc, eoqCalc, leverageCalc } from './calculators/corporate';
 import * as SB from './io/statementsBook';
 import * as W from './io/workbooks';
 import type { XBook } from './io/xlsx';
@@ -34,8 +37,11 @@ export interface StatementGrid {
 /** Ratio id → target as typed by the user (percent ratios in %, days in days, multiples in ×). */
 export type BenchmarkValues = Partial<Record<E.RatioId, string>>;
 
+/** Editable table: rows of text cells under fixed columns. */
+export type GridValue = string[][];
+
 export type FieldValue =
-  string | string[] | DatedRow[] | DistRow[] | StatementGrid | BenchmarkValues;
+  string | string[] | DatedRow[] | DistRow[] | StatementGrid | BenchmarkValues | GridValue;
 export type Values = Record<string, FieldValue>;
 
 interface FieldBase {
@@ -53,6 +59,7 @@ interface FieldBase {
 export type Field =
   | (FieldBase & { kind: 'number'; default: string; suffix?: string })
   | (FieldBase & { kind: 'date'; default: string })
+  | (FieldBase & { kind: 'text'; default: string })
   | (FieldBase & { kind: 'select'; default: string; options: { value: string; label: string }[] })
   | (FieldBase & { kind: 'numberList'; default: string[] })
   | (FieldBase & { kind: 'datedFlows'; default: DatedRow[] })
@@ -66,7 +73,14 @@ export type Field =
       step: number;
       suffix?: string;
     })
-  | (FieldBase & { kind: 'benchmarks'; default: BenchmarkValues });
+  | (FieldBase & { kind: 'benchmarks'; default: BenchmarkValues })
+  | (FieldBase & {
+      kind: 'grid';
+      default: GridValue;
+      columns: { label: string; numeric?: boolean }[];
+      minRows: number;
+      maxRows: number;
+    });
 
 export interface TableSpec {
   title?: string;
@@ -89,7 +103,8 @@ export type SectionPart =
   | 'zscore'
   | 'chart'
   | 'heatmap'
-  | 'histogram';
+  | 'histogram'
+  | 'lines';
 
 /** A result sub-tab: which presentation parts it shows. */
 export interface PresentationSection {
@@ -148,12 +163,27 @@ export interface Presentation {
     base: [number, number];
   };
   histogram?: { bins: E.HistogramBin[]; mean: number; p5: number; p95: number };
+  /** Generic x–y line chart (EBIT-EPS, cost curves, price–yield). */
+  lines?: LineChartSpec;
   /** One-click hand-offs to other calculators (e.g. use this WACC as the NPV discount rate). */
   actions?: Action[];
   /** Blocking data-quality alerts, shown prominently above the inputs. */
   alerts?: { title: string; message: string; items: string[] }[];
   /** Optional sub-tabs that organise long results; without it everything renders in order. */
   sections?: PresentationSection[];
+}
+
+export type AxisFormat = 'money' | 'pct' | 'num';
+
+export interface LineChartSpec {
+  title: string;
+  xLabel: string;
+  yLabel: string;
+  xFormat: AxisFormat;
+  yFormat: AxisFormat;
+  series: { name: string; points: [number, number][] }[];
+  /** Vertical markers (e.g. EOQ, indifference EBIT, current yield). */
+  markers?: { x: number; label: string }[];
 }
 
 export interface Action {
@@ -183,21 +213,10 @@ export interface Calculator {
 
 // --- value helpers ---------------------------------------------------------------------------
 
-/**
- * Parses user text in either number convention ("1,234.56" or "1.234,56", "12,5" = 12.5);
- * empty or malformed text becomes NaN so the engine reports it.
- */
-export const num = (x: FieldValue | undefined): number => {
-  if (typeof x !== 'string') return Number.NaN;
-  return readNumber(x)?.value ?? Number.NaN;
-};
-const pct = (x: FieldValue | undefined) => num(x) / 100;
-const str = (x: FieldValue | undefined) => (typeof x === 'string' ? x : '');
-const list = (x: FieldValue | undefined) => (Array.isArray(x) ? (x as string[]).map(num) : []);
+// num / pct / str / list / txt live in fieldValues.ts (shared with calculators/*), re-exported here.
+export { num, txt } from './fieldValues';
 const dated = (x: FieldValue | undefined) =>
   Array.isArray(x) ? (x as DatedRow[]).map((r) => ({ date: r.date, amount: num(r.amount) })) : [];
-/** Number → input text without float noise (0.1 + 0.2 → "0.3"). */
-export const txt = (x: number) => String(Number(x.toPrecision(12)));
 
 export function toDistribution(r: DistRow): E.Distribution {
   const [a, b, c] = [num(r.a), num(r.b), num(r.c)];
@@ -399,10 +418,34 @@ const tvm: Calculator = {
 
 // --- WACC / CAPM -----------------------------------------------------------------------------
 
+/** Hamada re-levering at the target structure (E, D and T from the WACC inputs), when selected. */
+function hamadaFor(v: Values): E.Result<E.HamadaOutput> | null {
+  if (str(v.betaSource) !== 'hamada') return null;
+  return E.hamadaBeta({
+    peerBeta: num(v.peerBeta),
+    peerDebtToEquity: num(v.peerDebtToEquity),
+    peerTaxRate: pct(v.peerTaxRate),
+    targetDebtToEquity: num(v.debtValue) / num(v.equityValue),
+    targetTaxRate: pct(v.taxRate),
+  });
+}
+
+/** WACC with an optional Hamada beta step, as one traced calculation (orchestration only). */
+function waccResult(v: Values): E.Result<E.WaccOutput> {
+  const h = hamadaFor(v);
+  if (!h) return E.waccFromCapm(waccInputs(v));
+  const t = new E.Trace('valuation.waccFromCapm');
+  const hb = t.include('hamada', h);
+  if (hb === null) return t.fail();
+  const w = t.include('wacc', E.waccFromCapm({ ...waccInputs(v), beta: hb.releveredBeta }));
+  return w === null ? t.fail() : t.ok(w);
+}
+
 function waccInputs(v: Values): E.WaccFromCapmInput {
+  const h = hamadaFor(v);
   return {
     riskFree: pct(v.riskFree),
-    beta: num(v.beta),
+    beta: h?.value ? h.value.releveredBeta : num(v.beta),
     marketRiskPremium: pct(v.erp),
     equityValue: num(v.equityValue),
     debtValue: num(v.debtValue),
@@ -426,7 +469,46 @@ const waccCalc: Calculator = {
       suffix: '%',
       hint: 'e.g. a government bond yield in the cash flows’ currency',
     },
-    { key: 'beta', label: 'Levered Beta (β)', kind: 'number', default: '1.2' },
+    {
+      key: 'betaSource',
+      label: 'Beta Source',
+      kind: 'select',
+      default: 'direct',
+      options: [
+        { value: 'direct', label: 'Direct input (levered β)' },
+        { value: 'hamada', label: 'Hamada: re-lever a peer β to my D/E' },
+      ],
+    },
+    {
+      key: 'beta',
+      label: 'Levered Beta (β)',
+      kind: 'number',
+      default: '1.2',
+      visible: (v) => v.betaSource !== 'hamada',
+    },
+    {
+      key: 'peerBeta',
+      label: 'Peer Levered Beta (βL)',
+      kind: 'number',
+      default: '1.1',
+      visible: (v) => v.betaSource === 'hamada',
+    },
+    {
+      key: 'peerDebtToEquity',
+      label: 'Peer D/E',
+      kind: 'number',
+      default: '0.4',
+      visible: (v) => v.betaSource === 'hamada',
+    },
+    {
+      key: 'peerTaxRate',
+      label: 'Peer Tax Rate',
+      kind: 'number',
+      default: '25',
+      suffix: '%',
+      visible: (v) => v.betaSource === 'hamada',
+      hint: 'Target D/E comes from E and D below; target tax from T.',
+    },
     {
       key: 'erp',
       label: 'Equity Risk Premium (ERP)',
@@ -448,9 +530,10 @@ const waccCalc: Calculator = {
     { key: 'taxRate', label: 'Marginal Tax Rate (T)', kind: 'number', default: '25', suffix: '%' },
   ],
   compute: (v) => {
-    const r = E.waccFromCapm(waccInputs(v));
+    const r = waccResult(v);
     if (r.value === null) return { result: r };
     const w = r.value;
+    const h = hamadaFor(v)?.value;
     const rate = txt(w.wacc * 100);
     const msg = `Discount rate ${fmtPct(w.wacc)} imported from WACC & CAPM.`;
     return {
@@ -458,6 +541,16 @@ const waccCalc: Calculator = {
       view: {
         outputs: [
           { label: 'WACC', value: fmtPct(w.wacc), primary: true },
+          ...(h
+            ? [
+                { label: 'Unlevered Beta (βU)', value: fmtNum(h.unleveredBeta, 4) },
+                {
+                  label: 'Re-levered Beta (βL*)',
+                  value: fmtNum(h.releveredBeta, 4),
+                  sub: `at D/E ${fmtNum(num(v.debtValue) / num(v.equityValue), 3)}`,
+                },
+              ]
+            : []),
           { label: 'Cost of Equity (Re)', value: fmtPct(w.costOfEquity) },
           { label: 'After-Tax Cost of Debt', value: fmtPct(w.afterTaxCostOfDebt) },
           {
@@ -480,7 +573,7 @@ const waccCalc: Calculator = {
   },
   excel: (v) => {
     const input = waccInputs(v);
-    const r = E.waccFromCapm(input);
+    const r = waccResult(v);
     return r.value ? W.waccBook(input, r.value) : null;
   },
 };
@@ -500,7 +593,65 @@ function npvInputs(v: Values) {
   };
 }
 
-function npvSens(i: ReturnType<typeof npvInputs>) {
+const builderOn = (v: Values) => v.source === 'builder';
+const realOn = (v: Values) => v.basis === 'real';
+
+/**
+ * Resolves the discount rate (nominal, or real via Fisher) and the cash flows (typed, or built
+ * bottom-up), then runs NPV. Composite steps are folded into one trace (orchestration only:
+ * every number comes from an engine function).
+ */
+function npvModel(v: Values) {
+  const i = npvInputs(v);
+  const composite = builderOn(v) || realOn(v);
+  const t = new E.Trace('cashflow.npv');
+  let rate: number | null = i.rate;
+  if (realOn(v)) {
+    rate = t.include(
+      'fisher',
+      E.fisherConvert({ rate: i.rate, inflation: pct(v.inflation), from: 'nominal' }),
+    );
+  }
+  let fcf: E.ProjectFcfOutput | null = null;
+  let cashFlows = i.cashFlows;
+  if (rate !== null && builderOn(v)) {
+    fcf = t.include(
+      'fcf',
+      E.projectFcf({
+        years: num(v.fcfYears),
+        revenue: num(v.fcfRevenue),
+        revenueGrowth: pct(v.fcfGrowth),
+        cogsPct: pct(v.fcfCogs),
+        ebitdaMargin: pct(v.fcfEbitda),
+        daPct: pct(v.fcfDa),
+        capexPct: pct(v.fcfCapex),
+        taxRate: pct(v.fcfTax),
+        dso: num(v.fcfDso),
+        dio: num(v.fcfDio),
+        dpo: num(v.fcfDpo),
+        initialInvestment: num(v.fcfInvestment),
+        terminalGrowth: optNum(v.fcfTerminalGrowth) === null ? null : pct(v.fcfTerminalGrowth),
+        discountRate: rate,
+      }),
+    );
+    if (fcf) cashFlows = fcf.cashFlows;
+  }
+  let result: E.Result<E.NpvOutput>;
+  if (!composite) result = E.npv({ rate: i.rate, cashFlows, firstPeriod: i.firstPeriod });
+  else if (rate === null || (builderOn(v) && !fcf)) result = t.fail();
+  else {
+    const n = t.include('npv', E.npv({ rate, cashFlows, firstPeriod: i.firstPeriod }));
+    result = n === null ? t.fail() : t.ok(n);
+  }
+  return { ...i, rate: rate ?? Number.NaN, cashFlows, fcf, result };
+}
+
+function npvSens(i: {
+  rate: number;
+  cashFlows: number[];
+  firstPeriod: 0 | 1;
+  shocks: number[] | null;
+}) {
   if (!i.shocks) return null;
   return E.npvSensitivity({
     rate: i.rate,
@@ -511,20 +662,65 @@ function npvSens(i: ReturnType<typeof npvInputs>) {
   });
 }
 
+const fcfField = (
+  key: string,
+  label: string,
+  def: string,
+  suffix?: string,
+  hint?: string,
+): Field => ({
+  key,
+  label,
+  kind: 'number',
+  default: def,
+  ...(suffix && { suffix }),
+  ...(hint && { hint }),
+  visible: builderOn,
+});
+
 const npvCalc: Calculator = {
   id: 'npv',
   category: 'Capital Budgeting',
   title: 'NPV & Sensitivity',
   description:
-    'Discounted cash flow valuation with a two-way stress grid: operating cash flows versus discount rate, shocked up to ±20%.',
+    'Discounted cash flow valuation: type the cash flows or build them bottom-up from operating drivers, choose nominal or real terms, and stress the result on a two-way grid.',
   fields: [
     {
       key: 'rate',
-      label: 'Discount Rate (r)',
+      label: 'Discount Rate, Nominal (r)',
       kind: 'number',
       default: '10',
       suffix: '%',
-      hint: 'Build it on the WACC & CAPM page and import it in one click',
+      hint: 'Build it on the WACC page and push it here in one click',
+    },
+    {
+      key: 'basis',
+      label: 'Cash Flow Terms',
+      kind: 'select',
+      default: 'nominal',
+      options: [
+        { value: 'nominal', label: 'Nominal (include inflation)' },
+        { value: 'real', label: 'Real (today’s money): discount at the real rate' },
+      ],
+    },
+    {
+      key: 'inflation',
+      label: 'Expected Inflation (π)',
+      kind: 'number',
+      default: '3',
+      suffix: '%',
+      visible: realOn,
+      hint: '(1 + r nominal) = (1 + r real)(1 + π)',
+    },
+    {
+      key: 'source',
+      label: 'Cash Flow Source',
+      kind: 'select',
+      default: 'direct',
+      options: [
+        { value: 'direct', label: 'Enter cash flows directly' },
+        { value: 'builder', label: 'Build bottom-up (FCF from drivers)' },
+      ],
     },
     {
       key: 'firstPeriod',
@@ -535,8 +731,34 @@ const npvCalc: Calculator = {
         { value: '0', label: 't = 0 (CFA convention)' },
         { value: '1', label: 't = 1 (Excel NPV convention)' },
       ],
+      visible: (v) => !builderOn(v),
     },
-    { key: 'cashFlows', label: 'Cash Flow Series', kind: 'numberList', default: DEMO_FLOWS },
+    {
+      key: 'cashFlows',
+      label: 'Cash Flow Series',
+      kind: 'numberList',
+      default: DEMO_FLOWS,
+      visible: (v) => !builderOn(v),
+    },
+    fcfField('fcfInvestment', 'Initial Investment (t = 0)', '70000'),
+    fcfField('fcfYears', 'Forecast Years', '5'),
+    fcfField('fcfRevenue', 'Year-1 Revenue', '60000'),
+    fcfField('fcfGrowth', 'Revenue Growth', '6', '%'),
+    fcfField('fcfCogs', 'COGS % of Revenue', '55', '%', 'Drives inventory and payables'),
+    fcfField('fcfEbitda', 'EBITDA Margin', '30', '%'),
+    fcfField('fcfDa', 'D&A % of Revenue', '8', '%'),
+    fcfField('fcfCapex', 'CapEx % of Revenue', '9', '%'),
+    fcfField('fcfTax', 'Tax Rate on EBIT', '25', '%'),
+    fcfField('fcfDso', 'DSO (days)', '45'),
+    fcfField('fcfDio', 'DIO (days)', '40'),
+    fcfField('fcfDpo', 'DPO (days)', '35'),
+    fcfField(
+      'fcfTerminalGrowth',
+      'Terminal Growth (blank = none)',
+      '',
+      '%',
+      'Gordon terminal value added to the final year',
+    ),
     {
       key: 'sensRange',
       label: 'Shock Range (±)',
@@ -559,14 +781,22 @@ const npvCalc: Calculator = {
     },
   ],
   compute: (v) => {
-    const i = npvInputs(v);
-    const r = E.npv({ rate: i.rate, cashFlows: i.cashFlows, firstPeriod: i.firstPeriod });
+    const i = npvModel(v);
+    const r = i.result;
     if (r.value === null) return { result: r };
     const irr = E.irr({ cashFlows: i.cashFlows });
     const mirr = E.mirr({ cashFlows: i.cashFlows, financeRate: i.rate, reinvestRate: i.rate });
+    const pb =
+      i.firstPeriod === 0
+        ? E.paybackAnalysis({ rate: i.rate, cashFlows: i.cashFlows }).value
+        : null;
     const sens = npvSens(i);
-    const outputs: Output[] = [{ label: 'NPV', value: fmtMoney(r.value.npv), primary: true }];
-    if (irr.value?.irr != null) outputs.push({ label: 'IRR', value: fmtPct(irr.value.irr) });
+    const real = realOn(v);
+    const outputs: Output[] = [
+      { label: real ? 'NPV (real terms)' : 'NPV', value: fmtMoney(r.value.npv), primary: true },
+    ];
+    if (irr.value?.irr != null)
+      outputs.push({ label: real ? 'IRR (real)' : 'IRR', value: fmtPct(irr.value.irr) });
     else if (irr.value)
       outputs.push({
         label: 'IRR',
@@ -575,16 +805,42 @@ const npvCalc: Calculator = {
       });
     if (mirr.value !== null)
       outputs.push({ label: 'MIRR (r = finance = reinvest)', value: fmtPct(mirr.value) });
+    if (pb) {
+      outputs.push({
+        label: 'Profitability Index',
+        value: pb.profitabilityIndex === null ? 'n/a' : fmtNum(pb.profitabilityIndex, 3),
+        primary: true,
+      });
+      outputs.push({
+        label: 'Payback',
+        value: pb.payback === null ? 'not recovered' : `${fmtNum(pb.payback, 2)} periods`,
+      });
+      outputs.push({
+        label: 'Discounted Payback',
+        value:
+          pb.discountedPayback === null
+            ? 'not recovered'
+            : `${fmtNum(pb.discountedPayback, 2)} periods`,
+      });
+    }
+    if (real)
+      outputs.push({
+        label: 'Real Discount Rate',
+        value: fmtPct(i.rate, 3),
+        sub: `nominal ${fmtPct(pct(v.rate), 2)}, π ${fmtPct(pct(v.inflation), 2)}`,
+      });
 
     const view: Presentation = {
       outputs,
       table: {
-        columns: ['Period', 'Cash flow', 'Present value'],
-        numeric: [true, true, true],
+        title: 'Cash flow schedule',
+        columns: ['Period', 'Cash flow', 'Present value', 'Cumulative PV'],
+        numeric: [true, true, true, true],
         rows: i.cashFlows.map((c, k) => [
           String(k),
           fmtMoney(c),
           fmtMoney(r.value!.presentValues[k]!),
+          pb ? fmtMoney(pb.cumulativeDiscounted[k]!) : '',
         ]),
       },
       chart: {
@@ -612,6 +868,54 @@ const npvCalc: Calculator = {
           message: 'Project A and the discount rate were imported from NPV.',
         },
       ],
+      tables: i.fcf
+        ? [
+            {
+              title: 'Bottom-up free cash flow build',
+              columns: [
+                'Year',
+                'Revenue',
+                'EBITDA',
+                'D&A',
+                'EBIT',
+                'Tax',
+                'NOPAT',
+                'CapEx',
+                'NWC',
+                'ΔNWC',
+                'FCF',
+              ],
+              numeric: Array(11).fill(true),
+              rows: i.fcf.rows.map((x) =>
+                [
+                  x.year,
+                  x.revenue,
+                  x.ebitda,
+                  x.depreciation,
+                  x.ebit,
+                  x.taxes,
+                  x.nopat,
+                  x.capex,
+                  x.nwc,
+                  x.deltaNwc,
+                  x.fcf,
+                ].map((n, k) => (k === 0 ? String(n) : fmtMoney(n))),
+              ),
+            },
+          ]
+        : [],
+      notes: [
+        ...(i.fcf && i.fcf.terminalValue !== 0
+          ? [
+              `Terminal value ${fmtMoney(i.fcf.terminalValue)} is included in the final-year cash flow.`,
+            ]
+          : []),
+        ...(real
+          ? [
+              'Real cash flows are discounted at the real rate; the NPV is identical to discounting the inflated (nominal) flows at the nominal rate.',
+            ]
+          : []),
+      ],
     };
     if (sens?.value) {
       const s = sens.value;
@@ -629,18 +933,17 @@ const npvCalc: Calculator = {
         ],
       };
     } else if (sens) {
-      view.notes = [
+      view.notes!.push(
         `Sensitivity grid unavailable: ${sens.errors[0]?.message ?? 'check the range'}`,
-      ];
+      );
     } else {
-      view.notes = ['Set a sensitivity range between 0% and 100% to see the heatmap.'];
+      view.notes!.push('Set a sensitivity range between 0% and 100% to see the heatmap.');
     }
     return { result: r, view };
   },
   excel: (v) => {
-    const i = npvInputs(v);
-    const r = E.npv({ rate: i.rate, cashFlows: i.cashFlows, firstPeriod: i.firstPeriod });
-    if (r.value === null) return null;
+    const i = npvModel(v);
+    if (i.result.value === null) return null;
     return W.npvBook({
       rate: i.rate,
       cashFlows: i.cashFlows,
@@ -1074,7 +1377,7 @@ const amort: Calculator = {
 
 const dayCount: Calculator = {
   id: 'daycount',
-  category: 'Fixed Income Conventions',
+  category: 'Fixed Income',
   title: 'Day Count Conventions',
   description:
     'Year fraction between two dates under each market day count basis: the input to accrued interest.',
@@ -1219,6 +1522,7 @@ function statementInputs(v: Values): E.StatementAnalysisInput {
     ...(Number.isFinite(tax) && { statutoryTaxRate: tax }),
     ...(benchmarks && { benchmarks }),
     whatIf: { deltaDso: num(v.deltaDso), deltaDio: num(v.deltaDio), deltaDpo: num(v.deltaDpo) },
+    covenants: { minDscr: optNum(v.covenantDscr), minInterestCoverage: optNum(v.covenantTie) },
   };
 }
 
@@ -1292,6 +1596,20 @@ const statementsCalc: Calculator = {
       default: {},
       visible: (v) => v.benchmarkPreset === 'custom',
       hint: 'Enter your source’s figures (e.g. a sector median). Percent ratios in %, days in days.',
+    },
+    {
+      key: 'covenantDscr',
+      label: 'Covenant: Min DSCR (×)',
+      kind: 'number',
+      default: '1.25',
+      hint: 'Blank = no covenant. A breach raises a critical red flag.',
+    },
+    {
+      key: 'covenantTie',
+      label: 'Covenant: Min Interest Coverage (×)',
+      kind: 'number',
+      default: '2.5',
+      hint: 'Blank = no covenant.',
     },
     {
       key: 'deltaDso',
@@ -1430,8 +1748,31 @@ const statementsCalc: Calculator = {
           ['Profit before tax', 'ebt'],
           ['Net income', 'netIncome'],
         ] as const
-      ).map(([label, key]) => [label, ...a.derived.map((d) => fmtMoney(d[key]))]),
+      )
+        .map(([label, key]) => [label, ...a.derived.map((d) => fmtMoney(d[key]))])
+        .concat([
+          [
+            'Effective tax rate (tax / EBT)',
+            ...a.derived.map((d) =>
+              d.effectiveTaxRate === null ? 'n/a' : fmtPct(d.effectiveTaxRate, 2),
+            ),
+          ],
+        ]),
     });
+    // Effective tax rate bridge: latest meaningful historical rate, pushable into WACC.
+    const etrIdx = a.derived.reduce(
+      (acc, d, k) =>
+        d.effectiveTaxRate !== null && d.effectiveTaxRate >= 0 && d.effectiveTaxRate < 1 ? k : acc,
+      -1,
+    );
+    const etr = etrIdx >= 0 ? a.derived[etrIdx]!.effectiveTaxRate : null;
+    const etrPeriod = etrIdx >= 0 ? a.periods[etrIdx] : null;
+    if (etr !== null)
+      outputs.push({
+        label: 'Effective Tax Rate',
+        value: fmtPct(etr, 2),
+        sub: `${etrPeriod} · tax / EBT`,
+      });
     if (w) {
       tables.push({
         title: `Working-capital what-if (${a.periods[last]})`,
@@ -1456,6 +1797,17 @@ const statementsCalc: Calculator = {
         outputs,
         diagnostics: a.diagnostics,
         dupont: { periods: a.periods, rows: a.dupont },
+        actions:
+          etr === null
+            ? []
+            : [
+                {
+                  label: 'Push Tax Rate to WACC →',
+                  target: 'wacc',
+                  patch: { taxRate: txt(etr * 100) },
+                  message: `Tax rate ${fmtPct(etr, 2)} (${etrPeriod} effective rate) imported from Financial Statement Analysis.`,
+                },
+              ],
         zscore: {
           periods: a.periods,
           altman: a.altman,
@@ -1485,7 +1837,7 @@ const statementsCalc: Calculator = {
           {
             id: 'overview',
             label: 'Overview & Red Flags',
-            include: ['outputs', 'notes', 'diagnostics'],
+            include: ['outputs', 'notes', 'actions', 'diagnostics'],
           },
           {
             id: 'ratios',
@@ -1519,18 +1871,28 @@ const statementsCalc: Calculator = {
   },
 };
 
+/** Sidebar order: groups appear in the order their first calculator does. */
 export const CALCULATORS: Calculator[] = [
   statementsCalc,
-  tvm,
   waccCalc,
+  leverageCalc,
+  ebitEpsCalc,
   npvCalc,
   irrCalc,
   mirrCalc,
   compareCalc,
   xirrCalc,
   mcCalc,
-  amort,
+  eoqCalc,
+  cashCalc,
+  bondCalc,
   dayCount,
+  ddmCalc,
+  dcfCalc,
+  portfolioCalc,
+  varCalc,
+  tvm,
+  amort,
 ];
 
 export function defaults(c: Calculator): Values {
